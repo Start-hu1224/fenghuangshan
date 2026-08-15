@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="utf-8">
+    <title>Day1 凤凰山 Cesium 底图</title>
+    <!-- Cesium CDN样式 -->
+    <link href="https://cdn.jsdelivr.net/npm/cesium/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <!-- Cesium CDN脚本 -->
+    <script src="https://cdn.jsdelivr.net/npm/cesium/Build/Cesium/Cesium.js"></script>
+    <style>
+        html, body, #cesiumContainer {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+
+    <script>
+        // 1.初始化地球，关闭多余控件
+        const viewer = new Cesium.Viewer('cesiumContainer', {
+            animation: false,
+            timeline: false,
+            baseLayerPicker: false,
+            geocoder: false
+        });
+  viewer.imageryLayers.removeAll();
+        // 2.替换为高德卫星影像底图（免token）
+  viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+    url: 'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
+    subdomains: ['1','2','3','4'],
+    maximumLevel: 18,
+    tilingScheme: new Cesium.WebMercatorTilingScheme()
+}));
+
+        // 3.相机飞至凤凰山 [经度,纬度,高度8000米]
+        viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(103.692, 27.319, 8000)
+        });
+
+        // 4.批量添加标注点位
+        const pois = [
+            { name: '凤凰山顶', lng: 103.704207, lat: 27.303716,},
+            { name: '防火检查站', lng:103.698209, lat: 27.301694 },
+            { name: '蓄水池', lng: 103.697999, lat: 27.300531 },
+            { name: '主入口', lng: 103.704631, lat: 27.309402 }
+        ];
+        pois.forEach(p => {
+            viewer.entities.add({
+                position: Cesium.Cartesian3.fromDegrees(p.lng, p.lat),
+                point: {
+                    pixelSize: 10,
+                    color: Cesium.Color.RED
+                },
+                label: {
+                    text: p.name,
+                    font: '14px sans-serif',
+                    pixelOffset: new Cesium.Cartesian2(0, -15)
+                }
+            });
+        });
+
+        // 选做：左键点击地图，控制台打印经纬度
+const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+ handler.setInputAction(movement => 
+ { const cart = viewer.camera.pickEllipsoid(movement.position, viewer.scene.globe.ellipsoid); 
+    if (!cart) {
+console.log("当前点击位置无法获取坐标");
+return;
+}
+const c = Cesium.Cartographic.fromCartesian(cart); 
+console.log('点击坐标:', 
+Cesium.Math.toDegrees(c.longitude).toFixed(6), Cesium.Math.toDegrees(c.latitude).toFixed(6)); },
+ Cesium.ScreenSpaceEventType.LEFT_CLICK);
+ </script>
+</body>
+</html>
