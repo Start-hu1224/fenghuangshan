@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Day1+Day2 · Cesium 入门：影像底图 + 定位 + 标注 +真实3D地形+山体范围 + Day3高程着色网格</title>
+  <link href="https://cdn.jsdelivr.net/npm/cesium@1.118/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+  <style>
+    html, body, #cesiumContainer { width: 100%; height: 100%; margin: 0; padding: 0; }
+    #tip { position: absolute;
+      left: 12px; top: 12px;
+      z-index: 10;
+      background: rgba(0,0,0,.6);
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font: 14px/1.5 sans-serif; }
+    #legend { position: absolute; right: 12px; bottom: 12px; z-index: 10; background: rgba(0,0,0,.6);
+              color: #fff; padding: 8px 12px; border-radius: 6px; font: 13px/1.6 sans-serif; }
+    #legend i { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: middle; }
+    .cesium-infoBox {
+      border-radius: 8px !important;
+    }
+    .cesium-infoBox-title {
+      background: #247ba0 !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="tip">凤凰山（已合并Day3高程着色网格）</div>
+  <div id="legend"><i style="background:#2ecc71"></i>低海拔 (&lt;1700m)<br /><i style="background:#f1c40f"></i>中海拔 (1700–2000m)<br /><i style="background:#e74c3c"></i>高海拔 (&gt;2000m)</div>
+  <div id="cesiumContainer"></div>
+  <script src="https://cdn.jsdelivr.net/npm/cesium@1.118/Build/Cesium/Cesium.js"></script>
+  <script src="凤凰山config.js"></script>
+  <script>
+    // Cesium 的 Web Worker 不允许通过 file:// 协议加载，必须走本地 HTTP 服务
+    if (window.location.protocol === 'file:') {
+      document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;padding:40px;font:18px/1.6 sans-serif;color:#c00;text-align:center;">' +
+        '<div><h2>请用本地 HTTP 服务打开本页面</h2>' +
+        '<p>Cesium 的 Web Worker 不允许通过 <code>file://</code> 直接打开。</p>' +
+        '<p>请在终端执行：<br><code style="background:#f5f5f5;padding:6px 10px;border-radius:4px;">python -m http.server 8081</code></p>' +
+        '<p>然后访问：<br><code style="background:#f5f5f5;padding:6px 10px;border-radius:4px;">http://localhost:8081/day2.html</code></p></div></div>';
+      throw new Error('Cesium must be loaded over HTTP, not file://');
+    }
+    // 有令牌就启用（地形/高级影像才需要），没有也能跑
+    if (CONFIG.cesiumIonToken) Cesium.Ion.defaultAccessToken = CONFIG.cesiumIonToken;
+    const [lon, lat] = CONFIG.center;
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      baseLayerPicker: false,
+      geocoder: false,
+      animation: false,
+      timeline: false,
+      navigationHelpButton: false,
+      skyBox: false,
+      skyAtmosphere: false
+    });
+    // 默认使用 Esri 卫星影像（CORS 友好、全球可用）；国内用户可换高德，但 localhost 可能因 CORS 黑屏
+    viewer.imageryLayers.removeAll();
+    viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      maximumLevel: 18,
+      credit: 'Esri',
+      enableCrossOrigin: true
+    }));
+    (async ()=>{
+      // 初始化默认平面地形提供者
+      let terrain = new Cesium.EllipsoidTerrainProvider();
+      if (CONFIG.cesiumIonToken) {
+        try {
+          // 异步加载Cesium全球真实地形DEM数据
+          terrain = await Cesium.createWorldTerrainAsync();
+        } catch (e) {
+          console.warn('地形加载失败，回退平面地形', e);
+        }
+      }
+      // 设置viewer使用地形
+      viewer.terrainProvider = terrain;
+      // ✅地形设置完成后开启深度检测
+      viewer.scene.globe.depthTestAgainstTerrain = true;
+      // 修改相机飞行，增加俯仰角度，倾斜视角方便观察山体3D起伏
+      viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(lon, lat, CONFIG.initHeight),
+        orientation: {
+          pitch: Cesium.Math.toRadians(-35) // 相机向下俯视35度，看山体立体效果
+        },
+        duration: 2
+      });
+      // ---------------------- Day2原有：绘制山体范围多边形 ----------------------
+      const half = 0.03;
+      viewer.entities.add({
+        name: CONFIG.mountainName + ' 范围',
+        polygon: {
+          hierarchy: Cesium.Cartesian3.fromDegreesArray([
+            lon - half, lat - half,
+            lon + half, lat - half,
+            lon + half, lat + half,
+            lon - half, lat + half,
+          ]),
+          material: Cesium.Color.fromCssColorString('#ff8800').withAlpha(0.25),
+          outline: true,
+          outlineColor: Cesium.Color.fromCssColorString('#ff8800'),
+          // 多边形贴地
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+        },
+        label: {
+          text: CONFIG.mountainName,
+          font: '16px sans-serif',
+          fillColor: Cesium.Color.WHITE,
+          pixelOffset: new Cesium.Cartesian2(0, -20),
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+        }
+      });
+
+      // ===================== 【新增：Day3高程着色网格点完整逻辑】 =====================
+      const span = 0.05, n = 15;
+      const cartos = [];
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          const lo = lon - span / 2 + span * i / (n - 1);
+          const la = lat - span / 2 + span * j / (n - 1);
+          cartos.push(Cesium.Cartographic.fromDegrees(lo, la));
+        }
+      }
+      // 判断是否可以采样真实地形
+      let useReal = CONFIG.cesiumIonToken && !(terrain instanceof Cesium.EllipsoidTerrainProvider);
+      if (useReal) {
+        try {
+          await Cesium.sampleTerrainMostDetailed(terrain, cartos);
+        } catch (e) {
+          console.warn('采样失败，改用示意高程', e);
+          useReal = false;
+        }
+      }
+      if (!useReal) {
+        // 示意高程：离中心越近越高（凤凰山约 2100m）
+        cartos.forEach(c => {
+          const d = Math.hypot(c.longitude - Cesium.Math.toRadians(lon), c.latitude - Cesium.Math.toRadians(lat));
+          c.height = 2100 - (d / Cesium.Math.toRadians(span)) * 600;
+        });
+      }
+      // 按高程给点着色添加点实体
+      cartos.forEach(c => {
+        const h = c.height;
+        const color = h > 2000 ? Cesium.Color.fromCssColorString('#e74c3c')
+                      : h >= 1700 ? Cesium.Color.fromCssColorString('#f1c40f')
+                      : Cesium.Color.fromCssColorString('#2ecc71');
+        viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(Cesium.Math.toDegrees(c.longitude), Cesium.Math.toDegrees(c.latitude), h),
+          point: { pixelSize: 7, color: color, outlineColor: Cesium.Color.WHITE, outlineWidth: 1 },
+        });
+      });
+      // ==============================================================================
+
+      viewer.scene.requestRender();
+    })();
+
+// ---------------------- Day2原有点位标注（完全保留，没有改动） ----------------------
+viewer.entities.add({
+  name: '火险监测中心',
+  position: Cesium.Cartesian3.fromDegrees(lon, lat),
+  point: {
+    pixelSize: 12,
+    color: Cesium.Color.RED,
+    outlineColor: Cesium.Color.WHITE,
+    outlineWidth: 2,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY
+  },
+  label: {
+    text: '火险监测中心',
+    font: '14px sans-serif',
+    pixelOffset: new Cesium.Cartesian2(0, -22),
+    fillColor: Cesium.Color.WHITE,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+  },
+  description: '<b>火险监测中心</b><br />负责实时采集气象与卫星火点数据。',
+});
+    // 示例标注 2：消防站（偏移一点）
+viewer.entities.add({
+  name: '凤凰山消防站',
+  position: Cesium.Cartesian3.fromDegrees(lon  -  0.009, lat  +  0.002),
+  point: { 
+    pixelSize: 12, 
+    color: Cesium.Color.GREEN, 
+    outlineColor: Cesium.Color.WHITE, 
+    outlineWidth: 2,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY
+  },
+  label: { 
+    text: '消防站', 
+    font: '14px sans-serif', 
+    pixelOffset: new Cesium.Cartesian2(12, -22), 
+    fillColor: Cesium.Color.WHITE ,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+  },
+  description: '<b>凤凰山消防站</b><br />进攻路线起点，常驻消防力量。',
+});
+// 新增标注1：森林防火瞭望塔
+viewer.entities.add({
+  name: '森林防火瞭望塔',
+  position: Cesium.Cartesian3.fromDegrees(lon + 0.007, lat + 0.008),
+  point: {
+    pixelSize: 12,
+    color: Cesium.Color.BLUE,
+    outlineColor: Cesium.Color.WHITE,
+    outlineWidth: 2,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY
+  },
+  label: {
+    text: '瞭望塔',
+    font: '14px sans-serif',
+    pixelOffset: new Cesium.Cartesian2(-12, -22),
+    fillColor: Cesium.Color.WHITE,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+  },
+  description: '<b>森林防火瞭望塔</b><br />人工值守，肉眼观测山林火情，实时上报火情信息。',
+});
+// 新增标注2：物资补给站
+viewer.entities.add({
+  name: '物资补给站',
+  position: Cesium.Cartesian3.fromDegrees(lon  -  0.006, lat  +  0.002),
+  point: {
+    pixelSize: 12,
+    color: Cesium.Color.YELLOW,
+    outlineColor: Cesium.Color.WHITE,
+    outlineWidth: 2,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY
+  },
+  label: {
+    text: '物资补给站',
+    font: '14px sans-serif',
+    pixelOffset: new Cesium.Cartesian2(12, -22),
+    fillColor: Cesium.Color.WHITE,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+  },
+  description: '<b>物资补给站</b><br />存放消防水带、灭火器、防护装备，为前线灭火队伍提供物资保障。',
+});
+  </script>
+</body>
+</html>
