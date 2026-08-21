@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>凤凰山</title>
+  <link href="https://cdn.jsdelivr.net/npm/cesium@1.118/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+  <style>
+    html, body, #cesiumContainer { width: 100%; height: 100%; margin: 0; padding: 0; }
+#tip {
+      background: rgba(255,255,255,.7);
+      color: #000000;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font: 14px/1.5 sans-serif;
+    }
+
+.toolbar {
+      position:absolute;
+      left:12px;
+      top:12px;
+      z-index:11;
+      display:flex;
+      gap:8px;
+      align-items:center;
+      background:rgba(255,255,255,0.7);
+      padding:6px 10px;
+      border-radius:6px;
+    }
+    .toolbar div {
+      color:#000;
+      font-weight:bold;
+    }
+    #viewInfo {
+      color:#000;
+      font-size:14px;
+    }
+    #legend { position: absolute; right: 12px; bottom: 12px; z-index: 10; background: rgba(255,255,255,.7);
+              color: #000000; padding: 8px 12px; border-radius: 6px; font: 13px/1.6 sans-serif; }
+    #legend i { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: middle; }
+    .cesium-infoBox {
+      border-radius: 8px !important;
+    }
+    .cesium-infoBox-title {
+      background: #247ba0 !important;
+    }
+    #bar {
+      position: absolute;
+      left: 12px;
+      top:12px;
+      z-index: 11;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+.top-panel {
+  position: absolute;
+  left: 15px;
+  top: 15px;
+  z-index: 100;
+  background: rgba(255,255,255, 0.85);
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+.line1 {
+  margin-bottom: 6px;
+}
+.title {
+  font-size: 18px;
+  font-weight: bold;
+  color: #000;
+}
+
+.line2 {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.line2 button {
+  padding: 5px 10px;
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+#btnClearFire { background: #d82626; }
+#btnFireRoute { background: #0066ff; }
+#btnIsolate { background: #ff8800; }
+#btnDefense { background: #19a334; }
+
+.line3 {
+  color: #222;
+  font-size: 15px;
+}
+
+    #bar button { font:14px sans-serif; padding:6px 12px; cursor:pointer; color:#fff; border:none; border-radius:4px; }
+    .toolbar button { font:14px sans-serif; padding:6px 12px; cursor:pointer; color:#fff; border:none; border-radius:4px; }
+    #btnFireRoute { background:#0066ff; }
+    #btnFireRoute.off { background:#444; }
+    #btnIsolate { background:#ff8800; }
+    #btnIsolate.off { background:#444; }
+    #btnDefense { background:#00aa22; }
+    #btnDefense.off { background:#444; }
+    #btnClearFire { background:#c82423; }
+  </style>
+</head>
+<body>
+<div class="top-panel">
+  <div class="line1">
+    <span class="title">凤凰山</span>
+  </div>
+  <div class="line2">
+    <button id="btnClearFire">清除火灾</button>
+    <button id="btnFireRoute">进攻路线</button>
+    <button id="btnIsolate">隔离带</button>
+    <button id="btnDefense">防守点</button>
+  </div>
+  <div class="line3">
+    <span id="viewInfo">点击山体生成火点，红色椭圆模拟火势蔓延</span>
+  </div>
+</div>
+  <div id="legend"><i style="background:#2ecc71"></i>低海拔 (&lt;1700m)<br /><i style="background:#f1c40f"></i>中海拔 (1700–2000m)<br /><i style="background:#e74c3c"></i>高海拔 (&gt;2000m)</div>
+  <div id="cesiumContainer"></div>
+  <script src="https://cdn.jsdelivr.net/npm/cesium@1.118/Build/Cesium/Cesium.js"></script>
+  <script src="凤凰山config.js"></script>
+  <script>
+    // Cesium 的 Web Worker 不允许通过 file:// 协议加载，必须走本地 HTTP 服务
+    if (window.location.protocol === 'file:') {
+      document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;padding:40px;font:18px/1.6 sans-serif;color:#c00;text-align:center;">' +
+        '<div><h2>请用本地 HTTP 服务打开本页面</h2>' +
+        '<p>Cesium 的 Web Worker 不允许通过 <code>file://</code> 直接打开。</p>' +
+        '<p>请在终端执行：<br><code style="background:#f5f5f5;padding:6px 10px;border-radius:4px;">python -m http.server 8081</code></p>' +
+        '<p>然后访问：<br><code style="background:#f5f5f5;padding:6px 10px;border-radius:4px;">http://localhost:8081/day4.html</code></p></div></div>';
+      throw new Error('Cesium must be loaded over HTTP, not file://');
+    }
+    // 有令牌就启用（地形/高级影像才需要），没有也能跑
+    if (CONFIG.cesiumIonToken) Cesium.Ion.defaultAccessToken = CONFIG.cesiumIonToken;
+    const [lon, lat] = CONFIG.center;
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      baseLayerPicker: false,
+      geocoder: false,
+      animation: false,
+      timeline: false,
+      navigationHelpButton: false,
+      skyBox: false,
+      skyAtmosphere: false
+    });
+    // 默认使用 Esri 卫星影像（CORS 友好、全球可用）；国内用户可换高德，但 localhost 可能因 CORS 黑屏
+    viewer.imageryLayers.removeAll();
+    viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      maximumLevel: 18,
+      credit: 'Esri',
+      enableCrossOrigin: true
+    }));
+    // 新建独立数据源，所有火灾全部放这里，清除只清这个数据源
+    const fireDataSource = new Cesium.CustomDataSource("fireLayer");
+    viewer.dataSources.add(fireDataSource);
+
+    // day5实体分组存储，用于按钮控制显隐
+    let fireRouteEntities = [];
+    let isolateEntities = [];
+    let defenseEntities = [];
+
+    (async ()=>{
+      // 初始化默认平面地形提供者
+      let terrain = new Cesium.EllipsoidTerrainProvider();
+      if (CONFIG.cesiumIonToken) {
+        try {
+          // 异步加载Cesium全球真实地形DEM数据
+          terrain = await Cesium.createWorldTerrainAsync();
+        } catch (e) {
+          console.warn('地形加载失败，回退平面地形', e);
+        }
+      }
+      // 设置viewer使用地形
+      viewer.terrainProvider = terrain;
+      // ✅地形设置完成后开启深度检测
+      viewer.scene.globe.depthTestAgainstTerrain = true;
+      // 修改相机飞行，增加俯仰角度，倾斜视角方便观察山体3D起伏
+      viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(lon, lat, CONFIG.initHeight),
+        orientation: {
+          pitch: Cesium.Math.toRadians(-35) // 相机向下俯视35度，看山体立体效果
+        },
+        duration: 2
+      });
+      const half = 0.015;
+      viewer.entities.add({
+        name: CONFIG.mountainName + ' 范围',
+        polygon: {
+          hierarchy: Cesium.Cartesian3.fromDegreesArray([
+            lon - half, lat - half,
+            lon + half, lat - half,
+            lon + half, lat + half,
+            lon - half, lat + half,
+          ]),
+          material: Cesium.Color.fromCssColorString('#ff8800').withAlpha(0.25),
+          outline: true,
+          outlineColor: Cesium.Color.fromCssColorString('#ff8800'),
+          // 多边形贴地
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+        },
+        label: {
+          text: CONFIG.mountainName,
+          font: '16px sans-serif',
+          fillColor: Cesium.Color.WHITE,
+          pixelOffset: new Cesium.Cartesian2(0, -20),
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+        }
+      });
+      const span = 0.025, n = 15;
+      const cartos = [];
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          const lo = lon - span / 2 + span * i / (n - 1);
+          const la = lat - span / 2 + span * j / (n - 1);
+          cartos.push(Cesium.Cartographic.fromDegrees(lo, la));
+        }
+      }
+      // 判断是否可以采样真实地形
+      let useReal = CONFIG.cesiumIonToken && !(terrain instanceof Cesium.EllipsoidTerrainProvider);
+      if (useReal) {
+        try {
+          await Cesium.sampleTerrainMostDetailed(terrain, cartos);
+        } catch (e) {
+          console.warn('采样失败，改用示意高程', e);
+          useReal = false;
+        }
+      }
+      if (!useReal) {
+        // 示意高程：离中心越近越高（凤凰山约 2100m）
+        cartos.forEach(c => {
+          const d = Math.hypot(c.longitude - Cesium.Math.toRadians(lon), c.latitude - Cesium.Math.toRadians(lat));
+          c.height = 2100 - (d / Cesium.Math.toRadians(span)) * 600;
+        });
+      }
+      // 按高程给点着色添加点实体
+      cartos.forEach(c => {
+        const h = c.height;
+// 无论海拔多少，全部统一黄色
+const color = Cesium.Color.fromCssColorString('#f1c40f');
+        viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(Cesium.Math.toDegrees(c.longitude), Cesium.Math.toDegrees(c.latitude), h),
+          point: { pixelSize: 8, color: color, outlineColor: Cesium.Color.WHITE, outlineWidth: 2 },
+        });
+      });
+      viewer.scene.requestRender();
+    })();
+
+viewer.entities.add({
+  name: '火险监测中心',
+  position: Cesium.Cartesian3.fromDegrees(lon, lat),
+  point: {
+    pixelSize: 12,
+    color: Cesium.Color.RED,
+    outlineColor: Cesium.Color.WHITE,
+    outlineWidth: 2,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY
+  },
+  label: {
+    text: '火险监测中心',
+    font: '14px sans-serif',
+    pixelOffset: new Cesium.Cartesian2(0, -22),
+    fillColor: Cesium.Color.WHITE,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+  },
+  description: '<b>火险监测中心</b><br />负责实时采集气象与卫星火点数据。',
+});
+    // 示例标注 2：消防站（偏移一点）
+viewer.entities.add({
+  name: '凤凰山消防站',
+  position: Cesium.Cartesian3.fromDegrees(lon  -  0.009, lat  +  0.002),
+  point: {
+    pixelSize: 12,
+    color: Cesium.Color.GREEN,
+    outlineColor: Cesium.Color.WHITE,
+    outlineWidth: 2,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY
+  },
+  label: {
+    text: '消防站',
+    font: '14px sans-serif',
+    pixelOffset: new Cesium.Cartesian2(12, -22),
+    fillColor: Cesium.Color.WHITE ,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+  },
+  description: '<b>凤凰山消防站</b><br />进攻路线起点，常驻消防力量。',
+});
+// 森林防火瞭望塔
+viewer.entities.add({
+  name: '森林防火瞭望塔',
+  position: Cesium.Cartesian3.fromDegrees(lon + 0.007, lat + 0.008),
+  point: {
+    pixelSize: 12,
+    color: Cesium.Color.BLUE,
+    outlineColor: Cesium.Color.WHITE,
+    outlineWidth: 2,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY
+  },
+  label: {
+    text: '瞭望塔',
+    font: '14px sans-serif',
+    pixelOffset: new Cesium.Cartesian2(-12, -22),
+    fillColor: Cesium.Color.WHITE,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+  },
+  description: '<b>森林防火瞭望塔</b><br />人工值守，肉眼观测山林火情，实时上报火情信息。',
+});
+// 物资补给站
+viewer.entities.add({
+  name: '物资补给站',
+  position: Cesium.Cartesian3.fromDegrees(lon  -  0.006, lat  +  0.002),
+  point: {
+    pixelSize: 12,
+    color: Cesium.Color.YELLOW,
+    outlineColor: Cesium.Color.WHITE,
+    outlineWidth: 2,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY
+  },
+  label: {
+    text: '物资补给站',
+    font: '14px sans-serif',
+    pixelOffset: new Cesium.Cartesian2(12, -22),
+    fillColor: Cesium.Color.WHITE,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+  },
+  description: '<b>物资补给站</b><br />存放消防水带、灭火器、防护装备，为前线灭火队伍提供物资保障。',
+});
+
+// —— 预置坐标（相对凤凰山中心偏移，纯示例，不写算法）——
+const fireStation = [lon - 0.012, lat + 0.010];
+const firePoint   = [lon + 0.006, lat - 0.004];
+const defensePts  = [[lon - 0.004, lat + 0.012], [lon + 0.014, lat + 0.006], [lon + 0.010, lat - 0.014]];
+
+// ==========进攻路线（蓝色）分组保存==========
+const routeLine = viewer.entities.add({
+  polyline: {
+    positions: Cesium.Cartesian3.fromDegreesArray([...fireStation, ...firePoint]),
+    width: 8,
+    material: Cesium.Color.BLUE,
+    clampToGround: true
+  },
+});
+const dsFireStation = viewer.entities.add({
+  position: Cesium.Cartesian3.fromDegrees(...fireStation),
+  point: {
+    pixelSize: 12,
+    color: Cesium.Color.GREEN,
+    outlineColor: Cesium.Color.WHITE,
+    outlineWidth: 2,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY
+  },
+  label: {
+    text: '消防站',
+    font: '13px sans-serif',
+    pixelOffset: new Cesium.Cartesian2(0, -18),
+    fillColor: Cesium.Color.WHITE,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+  },
+});
+const dsFirePoint = viewer.entities.add({
+  position: Cesium.Cartesian3.fromDegrees(...firePoint),
+  point: {
+    pixelSize: 12,
+    color: Cesium.Color.RED,
+    outlineColor: Cesium.Color.WHITE,
+    outlineWidth: 2,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY
+  },
+  label: {
+    text: '火点',
+    font: '13px sans-serif',
+    pixelOffset: new Cesium.Cartesian2(0, -18),
+    fillColor: Cesium.Color.WHITE,
+    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+  },
+});
+fireRouteEntities.push(routeLine, dsFireStation, dsFirePoint);
+
+// ==========隔离带（橙色虚线）分组保存==========
+const fb = [];
+const ringR = 0.018;
+for (let k = 0; k <= 12; k++) {
+  const a = (k / 12) * Math.PI * 2;
+  fb.push(firePoint[0] + ringR * Math.cos(a), firePoint[1] + ringR * Math.sin(a));
+}
+const isolateLine = viewer.entities.add({
+  polyline: {
+    positions: Cesium.Cartesian3.fromDegreesArray(fb),
+    width: 6,
+    material: new Cesium.PolylineDashMaterialProperty({ color: Cesium.Color.ORANGE }),
+    clampToGround: true
+  },
+});
+isolateEntities.push(isolateLine);
+
+// ==========防守点（绿色点位）分组保存==========
+defensePts.forEach((p, i) => {
+  const defEnt = viewer.entities.add({
+    position: Cesium.Cartesian3.fromDegrees(p[0], p[1]),
+    point: {
+      pixelSize: 13,
+      color: Cesium.Color.GREEN,
+      outlineColor: Cesium.Color.WHITE,
+      outlineWidth: 2,
+      heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY
+    },
+    label: {
+      text: '防守点' + (i + 1),
+      font: '12px sans-serif',
+      pixelOffset: new Cesium.Cartesian2(0, -16),
+      fillColor: Cesium.Color.WHITE,
+      heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+    },
+  });
+  defenseEntities.push(defEnt);
+});
+
+// =========按钮事件绑定========
+const btnFireRoute = document.getElementById('btnFireRoute');
+const btnIsolate = document.getElementById('btnIsolate');
+const btnDefense = document.getElementById('btnDefense');
+const btnClearFire = document.getElementById('btnClearFire');
+
+// 切换进攻路线显示隐藏
+btnFireRoute.onclick = ()=>{
+  const isShow = !fireRouteEntities[0].show;
+  fireRouteEntities.forEach(e=>e.show = isShow);
+  btnFireRoute.classList.toggle('off', !isShow);
+};
+// 切换隔离带显示隐藏
+btnIsolate.onclick = ()=>{
+  const isShow = !isolateEntities[0].show;
+  isolateEntities.forEach(e=>e.show = isShow);
+  btnIsolate.classList.toggle('off', !isShow);
+};
+// 切换防守点显示隐藏
+btnDefense.onclick = ()=>{
+  const isShow = !defenseEntities[0].show;
+  defenseEntities.forEach(e=>e.show = isShow);
+  btnDefense.classList.toggle('off', !isShow);
+};
+
+viewer.screenSpaceEventHandler.setInputAction((click) => {
+  // 射线拾取真实地表，替代错误pickEllipsoid
+  const ray = viewer.camera.getPickRay(click.position);
+  const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
+  if (!cartesian) return;
+  const carto = Cesium.Cartographic.fromCartesian(cartesian);
+  const flon = Cesium.Math.toDegrees(carto.longitude);
+  const flat = Cesium.Math.toDegrees(carto.latitude);
+  // 火点实体加入fireDataSource
+  fireDataSource.entities.add({
+    position: Cesium.Cartesian3.fromDegrees(flon, flat, carto.height),
+    point: { pixelSize: 10, color: Cesium.Color.RED, outlineColor: Cesium.Color.WHITE, outlineWidth: 2 },
+  });
+  const spread = fireDataSource.entities.add({
+    position: Cesium.Cartesian3.fromDegrees(flon, flat, carto.height),
+    ellipse: {
+      semiMajorAxis: 80,
+      semiMinorAxis: 80,
+      material: Cesium.Color.RED.withAlpha(0.35),
+      outline: true,
+      outlineColor: Cesium.Color.RED,
+      heightReference: Cesium.HeightReference.NONE
+    },
+  });
+  let r = 80;
+  const timer = setInterval(() => {
+    r += 60;
+    spread.ellipse.semiMajorAxis.setValue(r);
+    spread.ellipse.semiMinorAxis.setValue(r * 0.8);
+    if (r > 900) clearInterval(timer);
+  }, 200);
+}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+// 清除火灾：只清空火灾数据源，day5路线点位不受影响
+btnClearFire.onclick = () => {
+  fireDataSource.entities.removeAll();
+};
+
+// 批量修改所有地图标签：白色字体+黑色描边
+viewer.entities.values.forEach(entity => {
+  if(entity.label){
+    entity.label.fillColor = Cesium.Color.WHITE;
+    entity.label.outlineColor = Cesium.Color.BLACK;
+    entity.label.outlineWidth = 2;
+    entity.label.style = Cesium.LabelStyle.FILL_AND_OUTLINE;
+  }
+});
+
+  </script>
+</body>
+</html>
